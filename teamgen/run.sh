@@ -34,7 +34,7 @@
 #   RB_THREADS=30 SEED0=300    the dumps' threads and seeds (seeds 301, 302): a
 #                              dump's streams are per thread, so its thread
 #                              count is part of its seed
-#   GENERATED=YYYY-MM-DD       manifest.json's date (default today, UTC)
+#   GENERATED=TIMESTAMP        manifest.json's ISO 8601 time (default now, UTC)
 #   OUT=DIR                    where the files go (default output/gen9randombattle)
 #   LIMIT_GROUPS=N             testing only: a sample of the states, so the
 #                              weights are NOT exact

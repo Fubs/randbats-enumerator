@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! slots --weights SLOT_WEIGHTS.json --out DIR [--rb DUMP.json...] [--keep 1,2,3,4]
-//!       [--meta META.json] [--generated YYYY-MM-DD] [--rb-threads T] [--rb-table OUT.json]
+//!       [--meta META.json] [--generated TIMESTAMP] [--rb-threads T] [--rb-table OUT.json]
 //!       [--partial] [--threads N]
 //! ```
 //!
@@ -75,12 +75,21 @@ const RESIDUE: f64 = 1e-17;
 /// `_about` of `exact_team_weights`' own weights; a file without it (a
 /// merged estimate, say) would have its estimated slot labelled exact.
 const EXACT_ABOUT: &str = "computed exactly";
-fn rb_method(k: u8) -> String {
-    format!(
-        "Rao-Blackwellized sampling (exact_team_weights --mc-dump N --mc-rb {k}): teams drawn through the PS-exact \
-         port of the team loop up to pick {k}, and the remaining pool entries' forme labels drawn; pick {k}'s exact \
-         distribution given those is added at its teamDetails context. Unbiased, not exact."
-    )
+/// The method in a line, as "Slots 1-5 exact enumeration, slot 6 Rao-Blackwellized sampling".
+fn rb_method(exact: &BTreeSet<u8>, k: u8) -> String {
+    let rb = format!("slot {k} Rao-Blackwellized sampling");
+    let (Some(&lo), Some(&hi)) = (exact.first(), exact.last()) else {
+        return format!("Slot {k} Rao-Blackwellized sampling");
+    };
+    let slots = if lo == hi {
+        format!("Slot {lo}")
+    } else if usize::from(hi - lo) + 1 == exact.len() {
+        format!("Slots {lo}-{hi}")
+    } else {
+        let list: Vec<String> = exact.iter().map(u8::to_string).collect();
+        format!("Slots {}", list.join(", "))
+    };
+    format!("{slots} exact enumeration, {rb}")
 }
 fn details_of(code: u16) -> TeamDetails {
     let bit = |i: u16| code & (1 << i) != 0;
@@ -113,7 +122,7 @@ struct Args {
     threads: usize,
 }
 const USAGE: &str = "slots --weights SLOT_WEIGHTS.json --out DIR [--rb DUMP.json...] [--keep 1,2,3,4] [--meta META.json] \
-    [--generated YYYY-MM-DD] [--rb-threads T] [--rb-table OUT.json] [--partial] [--threads N]";
+    [--generated TIMESTAMP] [--rb-threads T] [--rb-table OUT.json] [--partial] [--threads N]";
 fn parse_args() -> Args {
     let mut a = Args {
         weights: PathBuf::new(),
@@ -332,12 +341,15 @@ fn fsum(xs: impl IntoIterator<Item = f64>) -> f64 {
     }
     hi
 }
-/// Today in UTC, as YYYY-MM-DD (Hinnant's `civil_from_days`).
-fn today() -> String {
-    let days = (std::time::SystemTime::now()
+/// Now in UTC, as an ISO 8601 timestamp to the second (the date by Hinnant's
+/// `civil_from_days`).
+fn now() -> String {
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() / 86400) as i64;
+        .as_secs();
+    let days = (secs / 86400) as i64;
+    let t = secs % 86400;
     let z = days + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097;
@@ -347,7 +359,7 @@ fn today() -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", t / 3600, t / 60 % 60, t % 60)
 }
 fn write(dir: &Path, file: &str, j: &Json) {
     let path = dir.join(file);
@@ -576,10 +588,10 @@ fn main() {
                 format!("slot{}_estimate", e.slot),
                 Json::Object(
                     vec![
-                        ("method".into(), Json::Leaf(Value::from(rb_method(e.slot)))),
-                        ("teams".into(), Json::Leaf(Value::from(e.teams))), ("seeds"
-                        .into(), Json::Leaf(Value::from(e.seeds.clone()))), ("threads"
-                        .into(), Json::Leaf(Value::from(e.threads))),
+                        ("method".into(), Json::Leaf(Value::from(rb_method(& exact, e
+                        .slot)))), ("teams".into(), Json::Leaf(Value::from(e.teams))),
+                        ("seeds".into(), Json::Leaf(Value::from(e.seeds.clone()))),
+                        ("threads".into(), Json::Leaf(Value::from(e.threads))),
                     ],
                 ),
             ));
@@ -587,7 +599,7 @@ fn main() {
     manifest
         .push((
             "generated".into(),
-            Json::Leaf(Value::from(args.generated.clone().unwrap_or_else(today))),
+            Json::Leaf(Value::from(args.generated.clone().unwrap_or_else(now))),
         ));
     if let Some(path) = &args.meta {
         let Value::Object(meta) = read_json(path) else {

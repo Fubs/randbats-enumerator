@@ -82,7 +82,7 @@ as the lead, 17% of the time in `first-6-slots.json` and never in `non-lead.json
 | `exact_slots` | the slots computed exactly, `[1, 2, 3, 4, 5]` |
 | `estimated_slots` | the slots estimated, `[6]` |
 | `slot6_estimate` | the estimate's `method`, its `teams`, and its dumps' `seeds` and `threads` (a dump's random streams are per thread, so its thread count is part of its seed) |
-| `generated` | the date the files were rendered (UTC) |
+| `generated` | when the files were rendered, as an ISO 8601 UTC timestamp |
 | `ps` | the PS commit the inputs were read from |
 | `fingerprint` | SHA-256 of a canonical dump of what the generator reads from PS: species, moves, items, abilities, the type chart, the format's rules and `sets.json`, with the few fields PS's generator reads that no set makes the port read |
 | `logic` | SHA-256 of the PS sources the port translates: `data/random-battles/gen9/teams.ts`, `sim/prng.ts` and `sim/dex.ts` |
@@ -184,7 +184,7 @@ same inputs and the same code.
 | `SLOT6` | `0` | `1` computes slot 6 exactly instead of estimating it |
 | `CHUNKS`, `TEAMS` | `2`, `200000000` | the slot-6 estimate's dumps and teams per dump |
 | `RB_THREADS`, `SEED0` | `30`, `300` | the dumps' threads, and their seeds `SEED0 + 1`… |
-| `GENERATED` | today (UTC) | the manifest's date |
+| `GENERATED` | now (UTC) | the manifest's timestamp |
 | `OUT` | `output/gen9randombattle` | where the files go; a relative path is taken from `teamgen/`, where `run.sh` runs |
 | `LIMIT_GROUPS` | unset | testing only: a sample of the states, so the weights are **not** exact; refused unless `OUT` is elsewhere |
 

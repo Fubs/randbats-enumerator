@@ -403,7 +403,7 @@ intermediate and is never published.
   sampled `data/stats/gen9randombattle.json` estimates), `non-lead.json`
   (slots 2–6), `slot-probabilities.json`, and
   `manifest.json`: the exact and estimated slots, the estimate's teams,
-  seeds and threads, the date, and `--meta`'s keys (the PS commit, the
+  seeds and threads, the time, and `--meta`'s keys (the PS commit, the
   `fingerprint` and the `logic` of `dump.js`).
 - **Mixtures.** A file for the slots S gives each species s the mixture
   Σ_{k∈S} Σ_c W_k(s, c) · K_{s,[k=1]}(· | c), normalized, of its exact set
