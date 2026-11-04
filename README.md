@@ -20,7 +20,7 @@ rounding. Slot 6 is a Rao–Blackwellized estimate.
 | `first-K-slots.json`, K = 2…6 | one of slots 1…K; `first-6-slots.json` is the whole team |
 | `non-lead.json` | any slot but the lead, which is seen at once: the file for a battle's other members |
 | `slot-probabilities.json` | not sets: the probability that slot k holds each species, k = 1…6 |
-| `manifest.json` | the PS commit and inputs the files describe, any level patches, and whether they are fresh |
+| `manifest.json` | the PS commit and inputs the files describe, any level patches, whether they are fresh, and when and against what they were last found so |
 
 A party slot is PS's party order at the start of a battle, the lead and then the other members in
 the order they were generated, not the order in which they are revealed. The slot-6 estimate
@@ -36,7 +36,12 @@ unchanged, and when only its code changes, as long as 300,000 PS teams still reb
 through the port. A change of levels alone, none to or from 100, is patched into the files by
 [`levels.js`](levels.js) once PS builds the same 100,000 teams at both commits apart from those
 levels. Any other change marks the files stale in their manifest until they are recomputed, and an
-issue stays open while something needs attention.
+issue stays open while something needs attention. A check that finds the files fresh records when
+(`checked_at`), at which PS commit (`checked_ps`), and the hashes of the PS sources their inputs
+come from (`inputs`). With its own PS checkout, a consumer can compare those hashes to see, even
+if these checks have stopped, whether PS has changed anything the files depend on since; the
+import proposed for pkmn/randbats ([#20](https://github.com/pkmn/randbats/pull/20)) does this for
+its copy.
 
 ## Recomputing
 

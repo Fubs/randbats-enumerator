@@ -11,7 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { FORMAT, DATA, PS, SETS, compare, write, writeManifest } = require('./check.js');
+const { FORMAT, DATA, PS, SETS, compare, inputs, stamp, write, writeManifest } = require('./check.js');
 
 const STATS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
 // Sorting ignores float residue (0.49999999999999994 against 0.5), so near-ties fall to the name.
@@ -94,7 +94,7 @@ const main = () => {
   for (const name of SETS) write(path.join(DATA, `${name}.json`), render(dex, sets, read(name)));
   write(path.join(DATA, 'slot-probabilities.json'), renderSlots(read('slot-probabilities')));
   const { format, ...rest } = c.manifest;
-  writeManifest(DATA, { format, fresh: true, ...rest });
+  writeManifest(DATA, stamp({ format, fresh: true, ...rest }, c.ps, inputs()));
   console.log(`published ${path.relative(__dirname, dir)} (smogon/pokemon-showdown@${c.manifest_ps}) to ` +
     path.relative(__dirname, DATA));
 };

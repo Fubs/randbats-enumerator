@@ -5,13 +5,14 @@
 // vendor/pokemon-showdown (built: `node build` there).
 //
 //   node check.js          the comparison, as JSON
-//   node check.js --mark   the verdict, as JSON, recorded in the published manifest when the
-//                          status changes; PARITY=pass|fail|error is the parity check's result
+//   node check.js --mark   the verdict, as JSON, recorded in the published manifest when it
+//                          moves; PARITY=pass|fail|error is the parity check's result
 //
 // The data is fresh while the manifest's `fingerprint` (what the generator reads) and `logic`
 // (the PS sources the port translates) match the checkout. When only `logic` differs, it stays
 // fresh if PARITY=pass. A parity check that could not run leaves the recorded status as it was.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const stringify = require('json-stringify-pretty-compact');
@@ -25,6 +26,25 @@ const SETS = [
   'non-lead',
 ];
 const FILES = [...SETS, 'slot-probabilities'];
+
+// The PS sources the generator's inputs come from, generously: the dex data and its loaders, the
+// format and its rules, the sets, and the generator. The manifest's `inputs` holds their hashes
+// at the last check that found the files fresh, so that a consumer with its own PS checkout can
+// tell, even if these checks have stopped, whether PS has changed anything the files depend on.
+const INPUTS = [
+  'config/formats.ts',
+  'data/abilities.ts', 'data/formats-data.ts', 'data/items.ts', 'data/moves.ts', 'data/pokedex.ts',
+  'data/rulesets.ts', 'data/typechart.ts',
+  'data/random-battles/gen9/sets.json', 'data/random-battles/gen9/teams.ts',
+  'sim/dex.ts', 'sim/dex-abilities.ts', 'sim/dex-data.ts', 'sim/dex-formats.ts', 'sim/dex-items.ts',
+  'sim/dex-moves.ts', 'sim/dex-species.ts', 'sim/prng.ts', 'sim/teams.ts',
+];
+
+// A missing file hashes to null, so that a removal or a rename reads as a change.
+const inputs = (ps = PS) => Object.fromEntries(INPUTS.map(file => {
+  const at = path.join(ps, file);
+  return [file, fs.existsSync(at) ? crypto.createHash('sha256').update(fs.readFileSync(at)).digest('hex') : null];
+}));
 
 const STALE = {
   inputs: 'PS has changed what the generator reads since these files were computed',
@@ -104,6 +124,14 @@ const record = (manifest, v, ps) => {
   if (fresh === false && stale?.reason === reason) return null;
   const since = fresh === false && stale?.ps || ps;
   return { format, fresh: false, stale: { ps: since, reason }, ...rest };
+};
+
+// The manifest as a check that found it fresh leaves it: when (`checked_at`), at which PS commit
+// (`checked_ps`), and the hashes of the PS sources its inputs come from there (`inputs`, last).
+const stamp = (manifest, ps, hashes) => {
+  const { format, fresh, stale, checked_at, checked_ps, inputs: _, ...rest } = manifest;
+  const time = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  return { format, fresh, ...(stale ? { stale } : {}), checked_at: time, checked_ps: ps, ...rest, inputs: hashes };
 };
 
 const ISSUE = {
@@ -191,7 +219,17 @@ const mark = parity => {
   const v = verdict(c, parity);
   if (patch) v.reason = `${patch.summary}; ${v.reason}`;
   const updated = c.readable ? record(c.manifest, v, c.ps) : null;
-  if (updated) writeManifest(DATA, updated);
+  // A check that finds the files fresh records itself when anything moved: the status, a level
+  // patch, or the hashes of the inputs' sources. A stale verdict keeps the last fresh check's.
+  let manifest = updated;
+  if (v.fresh === true) {
+    const hashes = inputs();
+    const base = updated || c.manifest;
+    if (updated || patch || JSON.stringify(base.inputs) !== JSON.stringify(hashes)) {
+      manifest = stamp(base, c.ps, hashes);
+    }
+  }
+  if (manifest) writeManifest(DATA, manifest);
   const short = c.ps ? c.ps.slice(0, 8) : 'unknown';
   const at = `smogon/pokemon-showdown@${short}`;
   let closing = null;
@@ -203,15 +241,16 @@ const mark = parity => {
     ...v,
     ps: c.ps,
     manifest_ps: c.manifest_ps,
-    changed: !!(updated || patch),
+    changed: !!manifest,
     commit_message: patch ? `${FORMAT}: levels patched at ${at}`
-      : updated && `${FORMAT}: ${updated.fresh ? 'fresh' : 'stale'} at ${at}`,
+      : updated ? `${FORMAT}: ${updated.fresh ? 'fresh' : 'stale'} at ${at}`
+      : manifest && `${FORMAT}: checked at ${at}`,
     closing_comment: closing,
     issue_body: v.kind === 'fresh' ? null : issueBody(c, v, parity, levels && !patch ? levels : null),
   };
 };
 
-module.exports = { FORMAT, DATA, PS, SETS, FILES, compare, write, writeManifest };
+module.exports = { FORMAT, DATA, PS, SETS, FILES, compare, inputs, stamp, write, writeManifest };
 
 if (require.main === module) {
   try {
