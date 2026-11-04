@@ -6,9 +6,8 @@ than sampled from it. PS builds a team one member at a time, and a member's set 
 it leads and on what the members before it bring: Komala carries Rapid Spin every time it leads,
 but 93% of the time in slot 2. The files have the per-species schema of
 [pkmn/randbats](https://github.com/pkmn/randbats)'
-[`data/stats/gen9randombattle.json`](https://github.com/pkmn/randbats/blob/main/data/stats/gen9randombattle.json),
-at full double precision rather than four decimals. Slots 1–5 are exact, up to floating-point
-rounding; slot 6 is a Rao–Blackwellized estimate.
+[`data/stats/gen9randombattle.json`](https://github.com/pkmn/randbats/blob/main/data/stats/gen9randombattle.json). Slots 1–5 are exact, up to floating-point
+rounding. Slot 6 is a Rao–Blackwellized estimate.
 
 ## Files
 
