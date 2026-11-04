@@ -1,0 +1,222 @@
+name: Check
+
+# Every hour, whether the published data still describes the generator at PS master. A run stops
+# early when it has already checked this PS commit against this commit of the repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      parity:
+        description: Run the parity check even if it has passed for these inputs
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+  schedule:
+    - cron: '36 * * * *'
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: check
+  cancel-in-progress: false
+
+env:
+  PARITY_TEAMS: 300000
+  PARITY_REPORT_EVERY: 60
+  LEVELS_TEAMS: 100000
+  ISSUE_TITLE: 'The exact data needs attention'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out this repo
+      uses: actions/checkout@v7
+    - name: Find PS master
+      id: ps
+      run: |-
+        commit=$(git ls-remote https://github.com/smogon/pokemon-showdown.git refs/heads/master | cut -f1)
+        [[ $commit =~ ^[0-9a-f]{40}$ ]]
+        echo "commit=$commit" >> "$GITHUB_OUTPUT"
+    # A manual run always checks.
+    - name: Look for an earlier check
+      id: seen
+      if: github.event_name != 'workflow_dispatch'
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/checked
+        key: checked-${{ steps.ps.outputs.commit }}-${{ github.sha }}
+        lookup-only: true
+    - name: Set up Node
+      if: steps.seen.outputs.cache-hit != 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: 26
+    - name: Build PS
+      if: steps.seen.outputs.cache-hit != 'true'
+      env:
+        PS_COMMIT: ${{ steps.ps.outputs.commit }}
+      run: |-
+        git init -q vendor/pokemon-showdown
+        git -C vendor/pokemon-showdown fetch -q --depth 1 https://github.com/smogon/pokemon-showdown.git "$PS_COMMIT"
+        git -C vendor/pokemon-showdown checkout -q FETCH_HEAD
+        # PS's locked dependencies, optional ones included: they carry esbuild's platform binary,
+        # so no install script is needed. The only warnings at this level are deprecations in
+        # sqlite3's tree, which nothing here uses; errors still print and fail the step.
+        npm -C vendor/pokemon-showdown ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error
+        node vendor/pokemon-showdown/build
+        npm install --no-package-lock --no-save --no-audit --no-fund json-stringify-pretty-compact@3.0.0
+    - name: Compare
+      id: compare
+      if: steps.seen.outputs.cache-hit != 'true'
+      env:
+        FORCE_PARITY: ${{ inputs.parity }}
+      run: |-
+        status=$(node check.js)
+        echo "$status"
+        if [ "$FORCE_PARITY" = true ] || jq -e .needs_parity <<<"$status" >/dev/null; then
+          echo "parity=true" >> "$GITHUB_OUTPUT"
+        fi
+        fingerprint=$(jq -r '.fingerprint // "0"' <<<"$status")
+        logic=$(jq -r '.logic // "0"' <<<"$status")
+        echo "inputs=${fingerprint:0:16}-${logic:0:16}" >> "$GITHUB_OUTPUT"
+        echo "fingerprint_match=$(jq -r '.fingerprint_match // false' <<<"$status")" >> "$GITHUB_OUTPUT"
+        echo "described=$(jq -r '.manifest_fingerprint // "none" | .[0:16]' <<<"$status")" >> "$GITHUB_OUTPUT"
+        # Parity's teams are a range of seeds fixed by the inputs: new inputs get other teams, and
+        # a rerun on the same inputs (a port fix, say) gets the same ones.
+        echo "start=$(( 16#${fingerprint:0:12} ^ 16#${logic:0:12} ))" >> "$GITHUB_OUTPUT"
+    # A change of levels alone, none to or from 100, is patched into the files rather than
+    # recomputed (levels.js). The verdict depends only on the two sides' inputs, so it is cached.
+    - name: Look for a level verdict
+      id: levels-cached
+      if: steps.compare.outputs.fingerprint_match == 'false'
+      continue-on-error: true
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/levels.json
+        key: levels-${{ steps.compare.outputs.described }}-${{ steps.compare.outputs.inputs }}-${{ env.LEVELS_TEAMS }}-${{ hashFiles('levels.js', 'teamgen/trace.js', 'teamgen/dump.js') }}
+    - name: Compare levels
+      id: levels
+      if: steps.compare.outputs.fingerprint_match == 'false' && steps.levels-cached.outputs.cache-hit != 'true'
+      continue-on-error: true
+      env:
+        START: ${{ steps.compare.outputs.start }}
+      run: |-
+        base=$(node levels.js --base)
+        echo "Comparing the inputs at smogon/pokemon-showdown@$base with master"
+        git init -q vendor/pokemon-showdown-base
+        git -C vendor/pokemon-showdown-base fetch -q --depth 1 https://github.com/smogon/pokemon-showdown.git "$base"
+        git -C vendor/pokemon-showdown-base checkout -q FETCH_HEAD
+        npm -C vendor/pokemon-showdown-base ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error
+        node vendor/pokemon-showdown-base/build
+        node levels.js --old vendor/pokemon-showdown-base --new vendor/pokemon-showdown --teams "$LEVELS_TEAMS" \
+          --start "$START" --workers "$(nproc)" --every "$PARITY_REPORT_EVERY" > "$RUNNER_TEMP/levels.json.tmp"
+        mv "$RUNNER_TEMP/levels.json.tmp" "$RUNNER_TEMP/levels.json"
+        jq -c 'del(.old_fingerprint, .new_fingerprint)' "$RUNNER_TEMP/levels.json"
+    - name: Remember the level verdict
+      if: steps.levels.outcome == 'success'
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/levels.json
+        key: ${{ steps.levels-cached.outputs.cache-primary-key }}
+    # Only passes are cached, so a failure, or a check that could not run, is retried.
+    - name: Look for a parity pass
+      id: pass
+      if: steps.compare.outputs.parity == 'true' && inputs.parity != true
+      continue-on-error: true
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/parity-pass
+        key: parity-${{ steps.compare.outputs.inputs }}-${{ env.PARITY_TEAMS }}-${{ hashFiles('teamgen/**', '!teamgen/target/**', '!teamgen/work/**', '!teamgen/output/**') }}
+        lookup-only: true
+    # No build cache: teamgen builds for the runner's own CPU (target-cpu=native), and a build
+    # cached on a newer CPU could fail with illegal instructions.
+    - name: Set up Rust
+      id: rust
+      if: steps.compare.outputs.parity == 'true' && steps.pass.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: dtolnay/rust-toolchain@stable
+    - name: Parity
+      id: parity
+      if: steps.compare.outputs.parity == 'true'
+      env:
+        CACHED: ${{ steps.pass.outputs.cache-hit }}
+        RUST: ${{ steps.rust.outcome }}
+        START: ${{ steps.compare.outputs.start }}
+      run: |-
+        set -o pipefail
+        if [ "$CACHED" = true ]; then
+          echo "Parity already passed for these inputs and this port."
+          result=pass
+        elif [ "$RUST" != success ] || ! (cd teamgen && node dump.js && cargo build --release --locked --bin parity); then
+          echo "::warning::the parity check could not run"
+          result=error
+        elif echo "Tracing $PARITY_TEAMS PS teams from seed index $START on $(nproc) workers" &&
+          node teamgen/trace.js --teams "$PARITY_TEAMS" --start "$START" --workers "$(nproc)" |
+          node .github/progress.js --total "$PARITY_TEAMS" --every "$PARITY_REPORT_EVERY" --label parity |
+          teamgen/target/release/parity --expect "$PARITY_TEAMS"; then
+          touch "$RUNNER_TEMP/parity-pass"
+          result=pass
+        else
+          echo "::warning::the port and PS disagree"
+          result=fail
+        fi
+        echo "result=$result" >> "$GITHUB_OUTPUT"
+    - name: Remember the parity pass
+      if: steps.parity.outputs.result == 'pass' && steps.pass.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/parity-pass
+        key: ${{ steps.pass.outputs.cache-primary-key }}
+    - name: Record the verdict
+      id: verdict
+      if: steps.seen.outputs.cache-hit != 'true'
+      env:
+        PARITY: ${{ steps.parity.outputs.result }}
+        PARITY_START: ${{ steps.compare.outputs.start }}
+        LEVELS: ${{ runner.temp }}/levels.json
+      run: |-
+        verdict=$(node check.js --mark)
+        echo "$verdict"
+        printf '%s' "$verdict" > "$RUNNER_TEMP/verdict.json"
+        if jq -e .changed <<<"$verdict" >/dev/null; then
+          git config user.name "Automated"
+          git config user.email "actions@users.noreply.github.com"
+          git add data
+          git commit -m "$(jq -r .commit_message <<<"$verdict")"
+          git push
+        fi
+    - name: Open, update or close the issue
+      if: steps.seen.outputs.cache-hit != 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |-
+        verdict="$RUNNER_TEMP/verdict.json"
+        issue=$(gh issue list --state open --limit 1000 --json number,title |
+          jq -r --arg title "$ISSUE_TITLE" 'map(select(.title == $title))[0].number // empty')
+        if jq -e '.kind == "fresh"' "$verdict" >/dev/null; then
+          if [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "$(jq -r .closing_comment "$verdict")"
+          fi
+        elif [ -n "$issue" ]; then
+          gh issue edit "$issue" --body "$(jq -r .issue_body "$verdict")"
+        else
+          gh issue create --title "$ISSUE_TITLE" --body "$(jq -r .issue_body "$verdict")"
+        fi
+    # Not after a parity check that could not run, so the next run tries again.
+    - name: Remember this check
+      if: steps.seen.outputs.cache-hit != 'true' && steps.parity.outputs.result != 'error'
+      run: touch "$RUNNER_TEMP/checked"
+    - name: Save the check
+      if: steps.seen.outputs.cache-hit != 'true' && steps.parity.outputs.result != 'error'
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/checked
+        key: checked-${{ steps.ps.outputs.commit }}-${{ github.sha }}

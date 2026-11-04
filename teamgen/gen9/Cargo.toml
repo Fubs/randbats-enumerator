@@ -1,0 +1,15 @@
+[package]
+name = "randbats-gen9"
+description = "Pokémon Showdown's Gen 9 Random Battles team generator, ported draw for draw"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+serde_json = "1"

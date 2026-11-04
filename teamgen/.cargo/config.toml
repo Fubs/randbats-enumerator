@@ -1,0 +1,6 @@
+# Built for the machine it runs on: the weights' arithmetic is fused
+# multiply-adds, one instruction with FMA and a library call per lane without.
+# Slot 6 runs about 9x slower on the baseline x86-64 target. Cargo reads this
+# when it is run from this directory or below.
+[build]
+rustflags = ["-C", "target-cpu=native"]
